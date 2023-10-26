@@ -38,6 +38,9 @@ use librespot::playback::mixer::alsamixer::AlsaMixer;
 mod player_event_handler;
 use player_event_handler::{run_program_on_sink_events, EventHandler};
 
+mod api_server;
+use api_server::Server;
+
 fn device_id(name: &str) -> String {
     hex::encode(Sha1::digest(name.as_bytes()))
 }
@@ -183,6 +186,7 @@ struct Setup {
     player_event_program: Option<String>,
     emit_sink_events: bool,
     zeroconf_ip: Vec<std::net::IpAddr>,
+    use_api: bool,
 }
 
 fn get_setup() -> Setup {
@@ -239,6 +243,7 @@ fn get_setup() -> Setup {
     const VOLUME_RANGE: &str = "volume-range";
     const ZEROCONF_PORT: &str = "zeroconf-port";
     const ZEROCONF_INTERFACE: &str = "zeroconf-interface";
+    const ENABLE_API: &str = "enable-api";
 
     // Mostly arbitrary.
     const AP_PORT_SHORT: &str = "a";
@@ -258,6 +263,7 @@ fn get_setup() -> Setup {
     const DISABLE_CREDENTIAL_CACHE_SHORT: &str = "H";
     const HELP_SHORT: &str = "h";
     const ZEROCONF_INTERFACE_SHORT: &str = "i";
+    const ENABLE_API_SHORT: &str = "I";
     const CACHE_SIZE_LIMIT_SHORT: &str = "M";
     const MIXER_TYPE_SHORT: &str = "m";
     const ENABLE_VOLUME_NORMALISATION_SHORT: &str = "N";
@@ -378,8 +384,11 @@ fn get_setup() -> Setup {
         ENABLE_VOLUME_NORMALISATION_SHORT,
         ENABLE_VOLUME_NORMALISATION,
         "Play all tracks at approximately the same apparent volume.",
-    )
-    .optopt(
+    ).optflag(
+        ENABLE_API_SHORT,
+        ENABLE_API, 
+        "Run API server"
+    ).optopt(
         NAME_SHORT,
         NAME,
         "Device name. Defaults to Librespot.",
@@ -1623,6 +1632,8 @@ fn get_setup() -> Setup {
     let player_event_program = opt_str(ONEVENT);
     let emit_sink_events = opt_present(EMIT_SINK_EVENTS);
 
+    let use_api = opt_present(ENABLE_API);
+
     Setup {
         format,
         backend,
@@ -1639,6 +1650,7 @@ fn get_setup() -> Setup {
         player_event_program,
         emit_sink_events,
         zeroconf_ip,
+        use_api
     }
 }
 
@@ -1648,6 +1660,8 @@ async fn main() {
     const RECONNECT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(600);
     const DISCOVERY_RETRY_TIMEOUT: Duration = Duration::from_secs(10);
     const RECONNECT_RATE_LIMIT: usize = 5;
+
+    console_subscriber::init();
 
     if env::var(RUST_BACKTRACE).is_err() {
         env::set_var(RUST_BACKTRACE, "full")
@@ -1662,6 +1676,7 @@ async fn main() {
     let mut discovery = None;
     let mut connecting = false;
     let mut _event_handler: Option<EventHandler> = None;
+    let mut _api_server: Option<Server> = None;
 
     let mut session = Session::new(setup.session_config.clone(), setup.cache.clone());
 
@@ -1738,6 +1753,10 @@ async fn main() {
                 run_program_on_sink_events(sink_status, &player_event_program)
             })));
         }
+    }
+
+    if setup.use_api {
+        _api_server = Some(Server::new(player.get_player_event_channel()));
     }
 
     loop {
