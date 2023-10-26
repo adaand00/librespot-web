@@ -386,7 +386,7 @@ fn get_setup() -> Setup {
         "Play all tracks at approximately the same apparent volume.",
     ).optflag(
         ENABLE_API_SHORT,
-        ENABLE_API, 
+        ENABLE_API,
         "Run API server"
     ).optopt(
         NAME_SHORT,
@@ -1650,7 +1650,7 @@ fn get_setup() -> Setup {
         player_event_program,
         emit_sink_events,
         zeroconf_ip,
-        use_api
+        use_api,
     }
 }
 
