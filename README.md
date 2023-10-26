@@ -15,7 +15,7 @@ We're available on [crates.io](https://crates.io/crates/librespot) as the _libre
 After installation, you can run librespot from the CLI using a command such as `librespot -n "Librespot Speaker" -b 160` to create a speaker called _Librespot Speaker_ serving 160 kbps audio.
 
 ## This fork
-As the origin by [plietar](https://github.com/plietar/) is no longer actively maintained, this organisation and repository have been set up so that the project may be maintained and upgraded in the future.
+This fork aims to add a REST-like API over http and websocket. This will make it possible to recieve the current playing state, and easily send commands from outside of spotify.
 
 # Documentation
 Documentation is currently a work in progress, contributions are welcome!
