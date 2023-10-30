@@ -1,11 +1,10 @@
-use std::sync::PoisonError;
-use serde_json;
 use serde::Serialize;
+use serde_json;
+use std::sync::PoisonError;
 use thiserror::Error;
 
-
 #[derive(Debug, Serialize)]
-pub struct JsonError{
+pub struct JsonError {
     code: JsonErrCode,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -26,50 +25,50 @@ pub enum JsonErrCode {
 
 impl JsonError {
     pub fn parse(data: Option<String>) -> Self {
-        Self { 
-            code: JsonErrCode::Parse, 
+        Self {
+            code: JsonErrCode::Parse,
             message: "Parse error".to_string(),
-            data 
+            data,
         }
     }
 
     pub fn invalid_request(data: Option<String>) -> Self {
-        Self { 
-            code: JsonErrCode::InvalidReq, 
+        Self {
+            code: JsonErrCode::InvalidReq,
             message: "Invalid Request".to_string(),
-            data 
+            data,
         }
     }
 
     pub fn method_not_found(data: Option<String>) -> Self {
-        Self { 
-            code: JsonErrCode::MethodNotFound, 
+        Self {
+            code: JsonErrCode::MethodNotFound,
             message: "Method not found".to_string(),
-            data 
+            data,
         }
     }
 
     pub fn invalid_param(data: Option<String>) -> Self {
-        Self { 
-            code: JsonErrCode::InvalidParam, 
+        Self {
+            code: JsonErrCode::InvalidParam,
             message: "Invalid params".to_string(),
-            data 
+            data,
         }
     }
 
     pub fn internal(data: Option<String>) -> Self {
-        Self { 
-            code: JsonErrCode::Internal, 
+        Self {
+            code: JsonErrCode::Internal,
             message: "Internal jsonrpc error".to_string(),
-            data 
+            data,
         }
     }
 
     pub fn no_control(data: Option<String>) -> Self {
-        Self { 
-            code: JsonErrCode::NoControl, 
+        Self {
+            code: JsonErrCode::NoControl,
             message: "No player to control".to_string(),
-            data 
+            data,
         }
     }
 }
@@ -85,6 +84,3 @@ impl From<serde_json::Error> for JsonError {
         Self::parse(Some(format!("{value:#?}")))
     }
 }
-
-
-

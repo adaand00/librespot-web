@@ -16,6 +16,7 @@ use thiserror::Error;
 use url::Url;
 
 use librespot::{
+    api_server::Server,
     connect::{config::ConnectConfig, spirc::Spirc},
     core::{
         authentication::Credentials, cache::Cache, config::DeviceType, version, Session,
@@ -30,7 +31,6 @@ use librespot::{
         mixer::{self, MixerConfig, MixerFn},
         player::{coefficient_to_duration, duration_to_coefficient, Player},
     },
-    api_server::Server,
 };
 
 #[cfg(feature = "alsa-backend")]

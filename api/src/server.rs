@@ -11,16 +11,15 @@ use std::{
 
 use parking_lot::RwLock;
 
+use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
 use warp::Filter;
-use futures_util::{StreamExt, SinkExt};
 
 use crate::error::JsonError;
 
-use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
 use librespot_connect::spirc::SpircCommand;
 use librespot_metadata::{audio::AudioItem, audio::UniqueFields};
-
+use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
 
 static UID_NEXT: AtomicUsize = AtomicUsize::new(1);
 
@@ -133,7 +132,7 @@ impl Server {
             let _event_task = rt.spawn(async move {
                 loop {
                     if let Some(e) = player_events.recv().await {
-                        state2.handle_internal_event(e).await.unwrap();
+                        state2.handle_internal_event(e).unwrap();
                     };
                 }
             });
@@ -145,7 +144,7 @@ impl Server {
                 .and(warp::ws())
                 .and(with_state.clone())
                 .map(|ws: warp::ws::Ws, state2: Arc<ServerInternal>| {
-                    ws.on_upgrade(|sock| async move { state2.add_user(sock).await })
+                    ws.on_upgrade(|sock| async move { state2.add_user(sock) })
                 });
 
             let f = warp::path::end()
@@ -154,7 +153,7 @@ impl Server {
                 .and(with_state.clone())
                 .then(
                     |body: serde_json::Value, state2: Arc<ServerInternal>| async move {
-                        let response = state2.handle_request(body).await;
+                        let response = state2.handle_request(body);
                         serde_json::to_string(&response).unwrap()
                     },
                 );
@@ -180,7 +179,7 @@ impl Server {
 }
 
 impl ServerInternal {
-    async fn handle_internal_event(&self, player_event: PlayerEvent) -> Result<(), JsonError> {
+    fn handle_internal_event(&self, player_event: PlayerEvent) -> Result<(), JsonError> {
         let mut notif: Option<Notification> = None;
 
         {
@@ -257,7 +256,7 @@ impl ServerInternal {
         Ok(())
     }
 
-    async fn add_user(&self, sock: warp::ws::WebSocket) {
+    fn add_user(&self, sock: warp::ws::WebSocket) {
         let mut event_channel = self.user_message_tx.subscribe();
 
         let uid = UID_NEXT.fetch_add(1, Ordering::Relaxed);
@@ -288,7 +287,10 @@ impl ServerInternal {
                 loop {
                     let ev = event_channel.recv().await;
                     match ev {
-                        Ok(m) => tx.send(warp::ws::Message::text(m)).await.expect("Internal event broadcast stopped"),
+                        Ok(m) => tx
+                            .send(warp::ws::Message::text(m))
+                            .await
+                            .expect("Internal event broadcast stopped"),
                         Err(_) => break,
                     };
                 }
@@ -306,8 +308,10 @@ impl ServerInternal {
         self.user_tasks.write().insert(uid, thr);
     }
 
-    async fn handle_request(&self, request: serde_json::Value) -> Result<JsonResult, JsonError> {
-        let id = request["id"].as_u64().ok_or_else(|| JsonError::invalid_request(Some("No ID".to_string())))?;
+    fn handle_request(&self, request: serde_json::Value) -> Result<JsonResult, JsonError> {
+        let id = request["id"]
+            .as_u64()
+            .ok_or_else(|| JsonError::invalid_request(Some("No ID".to_string())))?;
 
         let req: JsonRequest = serde_json::from_value(request)?;
 
@@ -320,8 +324,14 @@ impl ServerInternal {
             "setVolume" => {
                 let vol = req.params;
                 let vol = match vol {
-                    Some(serde_json::Value::Number(v)) => v.as_u64().ok_or_else(|| JsonError::invalid_param(Some("Volume not a number".to_string())))? as u16,
-                    _ => return Err(JsonError::invalid_param(Some("Volume not a number".to_string()))),
+                    Some(serde_json::Value::Number(v)) => v.as_u64().ok_or_else(|| {
+                        JsonError::invalid_param(Some("Volume not a number".to_string()))
+                    })? as u16,
+                    _ => {
+                        return Err(JsonError::invalid_param(Some(
+                            "Volume not a number".to_string(),
+                        )))
+                    }
                 };
 
                 let res = self.send_command(SpircCommand::SetVolume(vol))?;
@@ -342,7 +352,8 @@ impl ServerInternal {
 
         match *sp {
             Some(ref sp) => {
-                sp.send(command).or_else(|e| Err(JsonError::internal(Some(e.to_string()))))?;
+                sp.send(command)
+                    .or_else(|e| Err(JsonError::internal(Some(e.to_string()))))?;
                 Ok(())
             }
             None => Err(JsonError::no_control(None)),
