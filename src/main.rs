@@ -30,6 +30,7 @@ use librespot::{
         mixer::{self, MixerConfig, MixerFn},
         player::{coefficient_to_duration, duration_to_coefficient, Player},
     },
+    api_server::Server,
 };
 
 #[cfg(feature = "alsa-backend")]
@@ -37,9 +38,6 @@ use librespot::playback::mixer::alsamixer::AlsaMixer;
 
 mod player_event_handler;
 use player_event_handler::{run_program_on_sink_events, EventHandler};
-
-mod api_server;
-use api_server::Server;
 
 fn device_id(name: &str) -> String {
     hex::encode(Sha1::digest(name.as_bytes()))
@@ -1676,7 +1674,7 @@ async fn main() {
     let mut discovery = None;
     let mut connecting = false;
     let mut _event_handler: Option<EventHandler> = None;
-    let mut _api_server: Option<Server> = None;
+    let mut api_server: Option<Server> = None;
 
     let mut session = Session::new(setup.session_config.clone(), setup.cache.clone());
 
@@ -1756,7 +1754,7 @@ async fn main() {
     }
 
     if setup.use_api {
-        _api_server = Some(Server::new(player.get_player_event_channel()));
+        api_server = Some(Server::new(player.get_player_event_channel()));
     }
 
     loop {
@@ -1812,6 +1810,10 @@ async fn main() {
                         exit(1);
                     }
                 };
+                if let Some(server) = &api_server {
+                    server.set_spirc_channel(spirc_.commands.clone());
+                }
+
                 spirc = Some(spirc_);
                 spirc_task = Some(Box::pin(spirc_task_));
 
