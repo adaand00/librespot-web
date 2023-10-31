@@ -17,6 +17,7 @@ log = "0.4"
 thiserror = "1"
 parking_lot = { version = "0.12", features = ["deadlock_detection", "serde"] }
 futures-util = { version = "0.3", default_features = false }
+bytes = "1.5"
 
 [dependencies.librespot-core]
 path = "../core"

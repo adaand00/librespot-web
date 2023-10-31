@@ -6,14 +6,14 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    thread,
+    thread, str
 };
-
+use bytes::Bytes;
 use parking_lot::RwLock;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
-use warp::Filter;
+use warp::{Filter, ws};
 
 use crate::json_result::{JsonError, JsonResponse, JsonResult};
 
@@ -128,21 +128,22 @@ impl Server {
             let with_state = warp::any().map(move || state2.clone().to_owned());
 
             let ws_path = warp::path::end()
-                .and(warp::ws())
+                .and(ws())
                 .and(with_state.clone())
-                .map(|ws: warp::ws::Ws, state2: Arc<ServerInternal>| {
+                .map(|ws: ws::Ws, state2: Arc<ServerInternal>| {
                     debug!("New websocket connection");
                     ws.on_upgrade(|sock| async move { state2.add_user(sock) })
                 });
 
             let f = warp::path::end()
                 .and(warp::post())
-                .and(warp::body::json())
+                .and(warp::body::bytes())
                 .and(with_state.clone())
                 .map(
-                    |body: serde_json::Value, state2: Arc<ServerInternal>| {
+                    |body: Bytes , state2: Arc<ServerInternal>| {
                         debug!("New http POST request");
-                        match state2.handle_request(body) {
+                        let req: &str = str::from_utf8(body.as_ref()).unwrap();
+                        match state2.handle_request(req) {
                             Ok(res) => serde_json::to_string(&res).expect("Unable to serialize response"),
                             Err(err) => serde_json::to_string(&err).expect("Unable to serialize error response"),
                         }
@@ -164,6 +165,7 @@ impl Server {
     }
 
     pub fn set_spirc_channel(&self, spirc: mpsc::UnboundedSender<SpircCommand>) {
+        debug!("Spirc command channel set");
         let mut channel = self.internal.spirc.write();
         *channel = Some(spirc);
     }
@@ -172,6 +174,7 @@ impl Server {
 impl ServerInternal {
     fn handle_internal_event(&self, player_event: PlayerEvent) -> Result<(), JsonError> {
         let mut notif: Option<Notification> = None;
+        debug!("Recieved PlayerEvent: {player_event:?}");
 
         {
             // Needs to drop lock before sending notification,
@@ -214,6 +217,7 @@ impl ServerInternal {
 
     fn forward_event(&self, event: Notification) -> Result<(), JsonError> {
         if self.user_message_tx.receiver_count() != 0 {
+            debug!("Sending notification to connected websockets");
             let m = match event {
                 Notification::NewTrack(track) => JsonNotification {
                     jsonrpc: 2.0,
@@ -247,64 +251,68 @@ impl ServerInternal {
         Ok(())
     }
 
-    fn add_user(&self, sock: warp::ws::WebSocket) {
+    fn add_user(self: Arc<Self>, sock: warp::ws::WebSocket) {
         let mut event_channel = self.user_message_tx.subscribe();
 
         let uid = UID_NEXT.fetch_add(1, Ordering::Relaxed);
+        debug!("Adding new websocket connection, ID: {uid}");
 
         let users = self.user_tasks.clone();
+        let state = self.clone();
 
         let thr = self.rt.spawn(async move {
             let (mut tx, mut rx) = sock.split();
 
             // socket JSONs command -> player command -> socket response
-            let sock_listener = async move {
-                loop {
-                    let m = rx.next().await;
-                    match m {
-                        Some(Ok(val)) => {
-                            info!("Got {val:?} from WebSocket")
+            // internal event JSONs -> socket notification
+
+            loop {
+                
+                let response: String = tokio::select! {
+                    message = rx.next() => {
+                        debug!("New request from WS ID: {uid}");
+                        match message {
+                            None => break,
+                            Some(m) => {
+                                let res = state.handle_socket_message(m);
+                                let res = match res {
+                                    Ok(res) => serde_json::to_string(&res).expect("Should be able to parse result"),
+                                    Err(e) => serde_json::to_string(&e).expect("Should be able to parse error"),
+                                };
+                                serde_json::to_string(&res).expect("Should be able to serialize response")
+                            },
                         }
-                        Some(Err(err)) => {
-                            error!("Got {err:?} from Websocket")
+                    },
+                    event = event_channel.recv() => {
+                        debug!("New event to WS ID: {uid}");
+                        match event {
+                            Ok(m) => m,
+                            Err(e) => format!("Internal server error: {e}").to_string(),
                         }
-                        None => break,
-                    };
-                }
-            };
+                    }
+                };
 
-            // internal event JSONs -> socket
-            let sock_writer = async move {
-                loop {
-                    let ev = event_channel.recv().await;
-                    match ev {
-                        Ok(m) => tx
-                            .send(warp::ws::Message::text(m))
-                            .await
-                            .expect("Internal event broadcast stopped"),
-                        Err(_) => break,
-                    };
-                }
-            };
+                tx.send(ws::Message::text(response)).await.expect("websocket is gone?");
+            };     
 
-            tokio::select! {
-                _ = sock_listener => {},
-                _ = sock_writer => {},
-            }
-
-            debug!("dropping websocket");
+            debug!("dropping websocket id {uid}");
             users.write().remove(&uid);
         });
 
         self.user_tasks.write().insert(uid, thr);
     }
 
-    fn handle_request(&self, request: serde_json::Value) -> JsonResult {
-        if let serde_json::Value::Number(_n) = &request["id"] {
-            return Err(JsonError::invalid_request(Some("No ID".to_string())));
-        }
+    fn handle_socket_message(&self, message: Result<ws::Message, warp::Error>) -> JsonResult{
+        let m = message.map_err(|e| JsonError::internal(Some(e.to_string())))?;
 
-        let req: JsonRequest = serde_json::from_value(request)?;
+        let m = m.to_str().map_err(|_| JsonError::invalid_request(Some("Malformed data".to_string())))?;
+
+        self.handle_request(m)
+    }
+
+    fn handle_request(&self, request: &str) -> JsonResult {
+
+        let req: JsonRequest = serde_json::from_str(request)?;
 
         let result = match req.method.as_str() {
             "getStatus" => serde_json::to_value(self.player_state.as_ref())?,
@@ -336,6 +344,7 @@ impl ServerInternal {
 
     fn send_command(&self, command: SpircCommand) -> Result<(), JsonError> {
         let sp = self.spirc.read();
+        debug!("Sending spirc command: {command:?}");
 
         match *sp {
             Some(ref sp) => {
@@ -347,30 +356,6 @@ impl ServerInternal {
         }
     }
 }
-
-// impl JsonResponse {
-//     fn new_e(id: Option<u64>, code: JsonErrCode) -> Self {
-//         let message = match code {
-//             JsonErrCode::Parse => "Parse error",
-//             JsonErrCode::InvalidReq => "Invalid Request",
-//             JsonErrCode::MethodNotFound => "Method not found",
-//             JsonErrCode::InvalidParam => "Invalid params",
-//             JsonErrCode::Internal => "Internal jsonrpc error",
-//             JsonErrCode::NoStream => "Internal error (No control channel)",
-//             JsonErrCode::SpircPoison => "Internal error (Spirc poisoned)",
-//             JsonErrCode::PlayerPoison => "Internal error (Player state poisoned)",
-//         };
-
-//         JsonResponse::JsonError {
-//             id,
-//             jsonrpc: 2.0,
-//             error: JsonErrorStruct {
-//                 code,
-//                 message: message.to_string(),
-//             },
-//         }
-//     }
-// }
 
 impl Track {
     fn from_audio_item(item: AudioItem) -> Self {
