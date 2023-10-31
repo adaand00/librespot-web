@@ -15,7 +15,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
 use warp::Filter;
 
-use crate::error::JsonError;
+use crate::error::{JsonError, JsonResponse, JsonResult};
 
 use librespot_connect::spirc::SpircCommand;
 use librespot_metadata::{audio::AudioItem, audio::UniqueFields};
@@ -25,24 +25,11 @@ static UID_NEXT: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Debug, Deserialize)]
 struct JsonRequest {
-    id: u64,
+    id: i64,
     jsonrpc: f32,
     method: String,
     params: Option<serde_json::Value>,
 }
-
-#[derive(Debug, Serialize)]
-struct JsonResult {
-    id: u64,
-    jsonrpc: f32,
-    result: serde_json::Value,
-}
-
-// #[derive(Debug, Serialize)]
-// struct JsonErrorStruct {
-//     code: JsonErrCode,
-//     message: String,
-// }
 
 #[derive(Debug, Serialize)]
 enum Notification {
@@ -144,6 +131,7 @@ impl Server {
                 .and(warp::ws())
                 .and(with_state.clone())
                 .map(|ws: warp::ws::Ws, state2: Arc<ServerInternal>| {
+                    debug!("New websocket connection");
                     ws.on_upgrade(|sock| async move { state2.add_user(sock) })
                 });
 
@@ -151,10 +139,13 @@ impl Server {
                 .and(warp::post())
                 .and(warp::body::json())
                 .and(with_state.clone())
-                .then(
-                    |body: serde_json::Value, state2: Arc<ServerInternal>| async move {
-                        let response = state2.handle_request(body);
-                        serde_json::to_string(&response).unwrap()
+                .map(
+                    |body: serde_json::Value, state2: Arc<ServerInternal>| {
+                        debug!("New http POST request");
+                        match state2.handle_request(body) {
+                            Ok(res) => serde_json::to_string(&res).expect("Unable to serialize response"),
+                            Err(err) => serde_json::to_string(&err).expect("Unable to serialize error response"),
+                        }
                     },
                 );
 
@@ -308,10 +299,10 @@ impl ServerInternal {
         self.user_tasks.write().insert(uid, thr);
     }
 
-    fn handle_request(&self, request: serde_json::Value) -> Result<JsonResult, JsonError> {
-        let id = request["id"]
-            .as_u64()
-            .ok_or_else(|| JsonError::invalid_request(Some("No ID".to_string())))?;
+    fn handle_request(&self, request: serde_json::Value) -> JsonResult {
+        if let serde_json::Value::Number(_n) = &request["id"] {
+            return Err(JsonError::invalid_request(Some("No ID".to_string())));
+        }
 
         let req: JsonRequest = serde_json::from_value(request)?;
 
@@ -340,11 +331,7 @@ impl ServerInternal {
             _ => return Err(JsonError::method_not_found(None)),
         };
 
-        Ok(JsonResult {
-            id: req.id,
-            jsonrpc: 2.0,
-            result,
-        })
+        Ok(JsonResponse::new(req.id, result))
     }
 
     fn send_command(&self, command: SpircCommand) -> Result<(), JsonError> {

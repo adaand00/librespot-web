@@ -1,10 +1,22 @@
+use std::fmt::{write, Display, Write};
+
 use serde::Serialize;
 use serde_json;
-use std::sync::PoisonError;
 use thiserror::Error;
 
+pub type JsonResult = Result<JsonResponse, JsonError>;
+
 #[derive(Debug, Serialize)]
+pub struct JsonResponse {
+    id: i64,
+    jsonrpc: f32,
+    result: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Error)]
 pub struct JsonError {
+    id: Option<i64>,
+    jsonrpc: f32,
     code: JsonErrCode,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -23,9 +35,21 @@ pub enum JsonErrCode {
     PlayerPoison = -32002,
 }
 
+impl JsonResponse {
+    pub fn new(id: i64, result: serde_json::Value) -> Self {
+        Self {
+            id,
+            jsonrpc: 2.0,
+            result,
+        }
+    }
+}
+
 impl JsonError {
     pub fn parse(data: Option<String>) -> Self {
         Self {
+            id: None,
+            jsonrpc: 2.0,
             code: JsonErrCode::Parse,
             message: "Parse error".to_string(),
             data,
@@ -34,6 +58,8 @@ impl JsonError {
 
     pub fn invalid_request(data: Option<String>) -> Self {
         Self {
+            id: None,
+            jsonrpc: 2.0,
             code: JsonErrCode::InvalidReq,
             message: "Invalid Request".to_string(),
             data,
@@ -42,6 +68,8 @@ impl JsonError {
 
     pub fn method_not_found(data: Option<String>) -> Self {
         Self {
+            id: None,
+            jsonrpc: 2.0,
             code: JsonErrCode::MethodNotFound,
             message: "Method not found".to_string(),
             data,
@@ -50,6 +78,8 @@ impl JsonError {
 
     pub fn invalid_param(data: Option<String>) -> Self {
         Self {
+            id: None,
+            jsonrpc: 2.0,
             code: JsonErrCode::InvalidParam,
             message: "Invalid params".to_string(),
             data,
@@ -58,6 +88,8 @@ impl JsonError {
 
     pub fn internal(data: Option<String>) -> Self {
         Self {
+            id: None,
+            jsonrpc: 2.0,
             code: JsonErrCode::Internal,
             message: "Internal jsonrpc error".to_string(),
             data,
@@ -66,10 +98,18 @@ impl JsonError {
 
     pub fn no_control(data: Option<String>) -> Self {
         Self {
+            id: None,
+            jsonrpc: 2.0,
             code: JsonErrCode::NoControl,
             message: "No player to control".to_string(),
             data,
         }
+    }
+}
+
+impl Display for JsonError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
     }
 }
 
