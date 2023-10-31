@@ -15,7 +15,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
 use warp::Filter;
 
-use crate::error::{JsonError, JsonResponse, JsonResult};
+use crate::json_result::{JsonError, JsonResponse, JsonResult};
 
 use librespot_connect::spirc::SpircCommand;
 use librespot_metadata::{audio::AudioItem, audio::UniqueFields};

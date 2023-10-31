@@ -1,4 +1,4 @@
-use std::fmt::{write, Display, Write};
+use std::fmt::Display;
 
 use serde::Serialize;
 use serde_json;
