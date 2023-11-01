@@ -1,19 +1,21 @@
+use bytes::Bytes;
 use log::{debug, error, info};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    str,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    thread, str
+    thread,
 };
-use bytes::Bytes;
-use parking_lot::RwLock;
 
 use futures_util::{SinkExt, StreamExt};
+use static_dir::static_dir;
 use tokio::sync::{broadcast, mpsc};
-use warp::{Filter, ws};
+use warp::{ws, Filter};
 
 use crate::json_result::{JsonError, JsonResponse, JsonResult};
 
@@ -62,7 +64,7 @@ struct Cover {
 
 #[derive(Debug, Serialize, Clone)]
 struct Track {
-    track_id: u128,
+    track_id: String,
     name: String,
     covers: Vec<Cover>,
     album: Option<String>,
@@ -127,30 +129,33 @@ impl Server {
             let state2 = state1.clone();
             let with_state = warp::any().map(move || state2.clone().to_owned());
 
-            let ws_path = warp::path::end()
-                .and(ws())
-                .and(with_state.clone())
-                .map(|ws: ws::Ws, state2: Arc<ServerInternal>| {
+            let ws_path = warp::path::end().and(ws()).and(with_state.clone()).map(
+                |ws: ws::Ws, state2: Arc<ServerInternal>| {
                     debug!("New websocket connection");
                     ws.on_upgrade(|sock| async move { state2.add_user(sock) })
-                });
+                },
+            );
 
-            let f = warp::path::end()
+            let post_path = warp::path::end()
                 .and(warp::post())
                 .and(warp::body::bytes())
                 .and(with_state.clone())
-                .map(
-                    |body: Bytes , state2: Arc<ServerInternal>| {
-                        debug!("New http POST request");
-                        let req: &str = str::from_utf8(body.as_ref()).unwrap();
-                        match state2.handle_request(req) {
-                            Ok(res) => serde_json::to_string(&res).expect("Unable to serialize response"),
-                            Err(err) => serde_json::to_string(&err).expect("Unable to serialize error response"),
+                .map(|body: Bytes, state2: Arc<ServerInternal>| {
+                    debug!("New http POST request");
+                    let req: &str = str::from_utf8(body.as_ref()).unwrap();
+                    match state2.handle_request(req) {
+                        Ok(res) => {
+                            serde_json::to_string(&res).expect("Unable to serialize response")
                         }
-                    },
-                );
+                        Err(err) => {
+                            serde_json::to_string(&err).expect("Unable to serialize error response")
+                        }
+                    }
+                });
 
-            let path = f.or(ws_path);
+            let get_path = warp::get().and(static_dir!("./static"));
+
+            let path = post_path.or(ws_path).or(get_path);
 
             let http_server = Box::pin(warp::serve(path).run(([0, 0, 0, 0], 3030)));
 
@@ -198,11 +203,12 @@ impl ServerInternal {
                 PlayerEvent::TrackChanged { audio_item } => {
                     let track = Track::from_audio_item(*audio_item);
                     state.track = Some(track.clone());
+                    debug!("New track recieved: {track:?}");
                     notif = Some(Notification::NewTrack(track));
                 }
                 PlayerEvent::VolumeChanged { volume } => {
                     state.volume = volume;
-                    notif = Some(Notification::VolumeChange(volume.clone()));
+                    notif = Some(Notification::VolumeChange(volume));
                 }
                 _ => {}
             }
@@ -267,7 +273,7 @@ impl ServerInternal {
             // internal event JSONs -> socket notification
 
             loop {
-                
+
                 let response: String = tokio::select! {
                     message = rx.next() => {
                         debug!("New request from WS ID: {uid}");
@@ -293,7 +299,7 @@ impl ServerInternal {
                 };
 
                 tx.send(ws::Message::text(response)).await.expect("websocket is gone?");
-            };     
+            };
 
             debug!("dropping websocket id {uid}");
             users.write().remove(&uid);
@@ -302,17 +308,49 @@ impl ServerInternal {
         self.user_tasks.write().insert(uid, thr);
     }
 
-    fn handle_socket_message(&self, message: Result<ws::Message, warp::Error>) -> JsonResult{
+    fn handle_socket_message(&self, message: Result<ws::Message, warp::Error>) -> JsonResult {
         let m = message.map_err(|e| JsonError::internal(Some(e.to_string())))?;
 
-        let m = m.to_str().map_err(|_| JsonError::invalid_request(Some("Malformed data".to_string())))?;
+        let m = m
+            .to_str()
+            .map_err(|_| JsonError::invalid_request(Some("Malformed data".to_string())))?;
 
         self.handle_request(m)
     }
 
     fn handle_request(&self, request: &str) -> JsonResult {
+        let val: serde_json::Value = serde_json::from_str(request)?;
+        let id = match &val["id"] {
+            serde_json::Value::Number(n) => n,
+            serde_json::Value::Null => {
+                return Err(JsonError::invalid_request(Some(
+                    "No id field found".to_string(),
+                )))
+            }
+            _ => return Err(JsonError::parse(Some("Unexpected id value".to_string()))),
+        };
 
-        let req: JsonRequest = serde_json::from_str(request)?;
+        let id = match id.as_i64() {
+            Some(v) => v,
+            None => {
+                return Err(JsonError::invalid_request(Some(
+                    "Invalid id value".to_string(),
+                )))
+            }
+        };
+
+        let mut res = self.do_request(val);
+
+        match res.as_mut() {
+            Ok(resp) => resp.set_id(id),
+            Err(e) => e.set_id(Some(id)),
+        };
+
+        res
+    }
+
+    fn do_request(&self, req: serde_json::Value) -> JsonResult {
+        let req: JsonRequest = serde_json::from_value(req)?;
 
         let result = match req.method.as_str() {
             "getStatus" => serde_json::to_value(self.player_state.as_ref())?,
@@ -333,8 +371,7 @@ impl ServerInternal {
                     }
                 };
 
-                let res = self.send_command(SpircCommand::SetVolume(vol))?;
-                serde_json::to_value(res)?
+                serde_json::to_value(self.send_command(SpircCommand::SetVolume(vol))?)?
             }
             _ => return Err(JsonError::method_not_found(None)),
         };
@@ -349,7 +386,7 @@ impl ServerInternal {
         match *sp {
             Some(ref sp) => {
                 sp.send(command)
-                    .or_else(|e| Err(JsonError::internal(Some(e.to_string()))))?;
+                    .map_err(|e| JsonError::internal(Some(e.to_string())))?;
                 Ok(())
             }
             None => Err(JsonError::no_control(None)),
@@ -378,7 +415,7 @@ impl Track {
         };
 
         Track {
-            track_id: item.track_id.id,
+            track_id: item.track_id.to_base62().unwrap(),
             name: item.name,
             covers,
             album,

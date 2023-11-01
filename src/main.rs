@@ -1659,7 +1659,7 @@ async fn main() {
     const DISCOVERY_RETRY_TIMEOUT: Duration = Duration::from_secs(10);
     const RECONNECT_RATE_LIMIT: usize = 5;
 
-    console_subscriber::init();
+    //console_subscriber::init();
 
     if env::var(RUST_BACKTRACE).is_err() {
         env::set_var(RUST_BACKTRACE, "full")

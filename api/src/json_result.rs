@@ -43,6 +43,10 @@ impl JsonResponse {
             result,
         }
     }
+
+    pub fn set_id(&mut self, id: i64) {
+        self.id = id;
+    }
 }
 
 impl JsonError {
@@ -104,6 +108,10 @@ impl JsonError {
             message: "No player to control".to_string(),
             data,
         }
+    }
+
+    pub fn set_id(&mut self, id: Option<i64>) {
+        self.id = id;
     }
 }
 

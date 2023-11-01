@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>API</title>
+    <script src="../script.js"></script>
+</head>
+<body>
+    <h3>HTTP POST request</h3>
+    <textarea id="text" cols="30" rows="10">{
+    "id":10,
+    "jsonrpc":2.0,
+    "method":"getStatus"
+    }</textarea>
+    <button id="btn" onclick="sendText()">Send</button>
+    <div id="response"></div>
+</body>
+</html>
