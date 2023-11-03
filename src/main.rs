@@ -185,6 +185,8 @@ struct Setup {
     emit_sink_events: bool,
     zeroconf_ip: Vec<std::net::IpAddr>,
     use_api: bool,
+    use_web: bool,
+    custom_web_path: Option<String>,
 }
 
 fn get_setup() -> Setup {
@@ -242,6 +244,8 @@ fn get_setup() -> Setup {
     const ZEROCONF_PORT: &str = "zeroconf-port";
     const ZEROCONF_INTERFACE: &str = "zeroconf-interface";
     const ENABLE_API: &str = "enable-api";
+    const ENABLE_WEB: &str = "enable-web-interface";
+    const WEB_DIR: &str = "custom-web-dir";
 
     // Mostly arbitrary.
     const AP_PORT_SHORT: &str = "a";
@@ -262,6 +266,8 @@ fn get_setup() -> Setup {
     const HELP_SHORT: &str = "h";
     const ZEROCONF_INTERFACE_SHORT: &str = "i";
     const ENABLE_API_SHORT: &str = "I";
+    const ENABLE_WEB_SHORT: &str = "j";
+    const WEB_DIR_SHORT: &str = "k";
     const CACHE_SIZE_LIMIT_SHORT: &str = "M";
     const MIXER_TYPE_SHORT: &str = "m";
     const ENABLE_VOLUME_NORMALISATION_SHORT: &str = "N";
@@ -386,7 +392,12 @@ fn get_setup() -> Setup {
         ENABLE_API_SHORT,
         ENABLE_API,
         "Run API server"
-    ).optopt(
+    ).optflag(
+        ENABLE_WEB_SHORT,
+        ENABLE_WEB,
+        "Enable static website. Serves default UI, to set custom files also use option [custom-web-dir]"
+    )
+    .optopt(
         NAME_SHORT,
         NAME,
         "Device name. Defaults to Librespot.",
@@ -583,6 +594,11 @@ fn get_setup() -> Setup {
         ZEROCONF_INTERFACE,
         "Comma-separated interface IP addresses on which zeroconf will bind. Defaults to all interfaces. Ignored by DNS-SD.",
         "IP"
+    ).optopt(
+        WEB_DIR_SHORT,
+        WEB_DIR,
+        "Path to folder with custom static website files. Only available when [enable-web-api] set.",
+        "/path/to/web/dir/"
     );
 
     #[cfg(feature = "passthrough-decoder")]
@@ -1631,6 +1647,9 @@ fn get_setup() -> Setup {
     let emit_sink_events = opt_present(EMIT_SINK_EVENTS);
 
     let use_api = opt_present(ENABLE_API);
+    let use_web = opt_present(ENABLE_WEB);
+
+    let custom_web_path = opt_str(WEB_DIR); 
 
     Setup {
         format,
@@ -1649,6 +1668,8 @@ fn get_setup() -> Setup {
         emit_sink_events,
         zeroconf_ip,
         use_api,
+        use_web,
+        custom_web_path,
     }
 }
 
@@ -1754,7 +1775,7 @@ async fn main() {
     }
 
     if setup.use_api {
-        api_server = Some(Server::new(player.get_player_event_channel()));
+        api_server = Some(Server::new(player.get_player_event_channel(), setup.use_web, setup.custom_web_path));
     }
 
     loop {

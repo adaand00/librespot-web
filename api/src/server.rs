@@ -95,7 +95,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(mut player_events: PlayerEventChannel) -> Self {
+    pub fn new(mut player_events: PlayerEventChannel, enable_web: bool, custom_path: Option<String>) -> Self {
         info!("Starting api server thread");
 
         let rt = tokio::runtime::Runtime::new().expect("Unable to start server runtime");
@@ -153,9 +153,33 @@ impl Server {
                     }
                 });
 
-            let get_path = warp::get().and(static_dir!("./static"));
+            let custom_dir = custom_path.is_some();
 
-            let path = post_path.or(ws_path).or(get_path);
+            let dir = match custom_path{
+                Some(s) => s,
+                None => "".to_string()
+            };
+
+            let get_path_custom = warp::any()
+                .and_then(move || async move {
+                    if enable_web & custom_dir{
+                        Ok(())
+                    }else{
+                        Err(warp::reject::not_found())
+                    }
+                }).and(warp::fs::dir(dir))
+                .map(|_, d| d);
+
+            let get_path_static = warp::any().and_then(move || async move {
+                    if enable_web & !custom_dir{
+                        Ok(())
+                    }else{
+                        Err(warp::reject::not_found())
+                    }
+                }).and(static_dir!("./static"))
+                .map(|_, d| d);
+
+            let path = post_path.or(ws_path).or(get_path_custom).or(get_path_static);
 
             let http_server = Box::pin(warp::serve(path).run(([0, 0, 0, 0], 3030)));
 
