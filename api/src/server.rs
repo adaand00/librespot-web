@@ -257,21 +257,21 @@ impl ServerInternal {
                 Notification::Pause => JsonNotification {
                     jsonrpc: 2.0,
                     method: "OnPause".to_string(),
-                    params: serde_json::Value::Array(Vec::new()),
+                    params: serde_json::Value::Null,
                 },
                 Notification::Play => JsonNotification {
                     jsonrpc: 2.0,
                     method: "OnPlay".to_string(),
-                    params: serde_json::to_value(&self.player_state.read().track)?,
+                    params: serde_json::Value::Null,
                 },
                 Notification::Stop => JsonNotification {
                     jsonrpc: 2.0,
                     method: "OnPause".to_string(),
-                    params: serde_json::Value::Array(Vec::new()),
+                    params: serde_json::Value::Null,
                 },
                 Notification::VolumeChange(vol) => JsonNotification {
                     jsonrpc: 2.0,
-                    method: "OnPlay".to_string(),
+                    method: "OnVolumeChange".to_string(),
                     params: serde_json::to_value(vol)?,
                 },
             };
@@ -285,7 +285,8 @@ impl ServerInternal {
         let mut event_channel = self.user_message_tx.subscribe();
 
         let uid = UID_NEXT.fetch_add(1, Ordering::Relaxed);
-        debug!("Adding new websocket connection, ID: {uid}");
+        let num_open = self.user_message_tx.receiver_count();
+        debug!("Adding new websocket connection, ID: {uid}, currently open: {num_open}");
 
         let users = self.user_tasks.clone();
         let state = self.clone();
@@ -303,13 +304,18 @@ impl ServerInternal {
                         debug!("New request from WS ID: {uid}");
                         match message {
                             None => break,
-                            Some(m) => {
+                            Some(m) => { 
+
+                                match &m {
+                                    Ok(ms) => if ms.is_close() {debug!("Got close from WS ID: {uid}"); break;},
+                                    Err(_) => () 
+                                }
+
                                 let res = state.handle_socket_message(m);
-                                let res = match res {
+                                match res {
                                     Ok(res) => serde_json::to_string(&res).expect("Should be able to parse result"),
                                     Err(e) => serde_json::to_string(&e).expect("Should be able to parse error"),
-                                };
-                                serde_json::to_string(&res).expect("Should be able to serialize response")
+                                }
                             },
                         }
                     },
@@ -322,7 +328,10 @@ impl ServerInternal {
                     }
                 };
 
-                tx.send(ws::Message::text(response)).await.expect("websocket is gone?");
+                match tx.send(ws::Message::text(response)).await {
+                    Ok(_) => (),
+                    Err(e) => {debug!("{e}"); break;}
+                };
             };
 
             debug!("dropping websocket id {uid}");
