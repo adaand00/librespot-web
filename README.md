@@ -1,10 +1,24 @@
+# This fork
+This fork aims to add a REST-like API over http and websocket. This will make it possible to recieve the current playing state, and to send commands from outside of spotify. Also included is an optional web UI. 
+
+## New parameters
+
+`-I, --enable-api` Enable JSONRPC API.
+
+`-j, --enable-web-interface` Enable UI website, available at localhost:3030.
+
+`-k, --custom-web-dir /path/to/web/dir/` Path to folder with custom static website files. Only available when [enable-web-interface] set.
+
+Other functions should be identical to the original project. Now to the regular README...
+
+# librespot
+
 [![Build Status](https://github.com/librespot-org/librespot/workflows/test/badge.svg)](https://github.com/librespot-org/librespot/actions)
 [![Gitter chat](https://badges.gitter.im/librespot-org/librespot.png)](https://gitter.im/librespot-org/spotify-connect-resources)
 [![Crates.io](https://img.shields.io/crates/v/librespot.svg)](https://crates.io/crates/librespot)
 
 Current maintainers are [listed on GitHub](https://github.com/orgs/librespot-org/people).
 
-# librespot
 *librespot* is an open source client library for Spotify. It enables applications to use Spotify's service to control and play music via various backends, and to act as a Spotify Connect receiver. It is an alternative to the official and [now deprecated](https://pyspotify.mopidy.com/en/latest/#libspotify-s-deprecation) closed-source `libspotify`. Additionally, it will provide extra features which are not available in the official library.
 
 _Note: librespot only works with Spotify Premium. This will remain the case. We will not support any features to make librespot compatible with free accounts, such as limited skips and adverts._
@@ -13,9 +27,6 @@ _Note: librespot only works with Spotify Premium. This will remain the case. We 
 We're available on [crates.io](https://crates.io/crates/librespot) as the _librespot_ package. Simply run `cargo install librespot` to install librespot on your system. Check the wiki for more info and possible [usage options](https://github.com/librespot-org/librespot/wiki/Options).
 
 After installation, you can run librespot from the CLI using a command such as `librespot -n "Librespot Speaker" -b 160` to create a speaker called _Librespot Speaker_ serving 160 kbps audio.
-
-## This fork
-This fork aims to add a REST-like API over http and websocket. This will make it possible to recieve the current playing state, and easily send commands from outside of spotify.
 
 # Documentation
 Documentation is currently a work in progress, contributions are welcome!
