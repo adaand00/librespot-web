@@ -1,0 +1,75 @@
+body {
+    background-color: #222222;
+    color: #ffffff;
+    font-family: sans-serif;
+}
+
+button {
+    background-color: #222222;
+    color: #ffffff;
+    border: 2px solid white;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    padding: 6px;
+    box-sizing: content-box;
+    margin: 10px;
+}
+
+#info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 20px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    text-shadow: black 3px 3px 20px;
+}
+
+#title {
+    font-size: 20px;
+    margin-bottom: 5px;
+}
+
+#artist {
+    font-size: 14px;
+    margin-bottom: 5px;
+}
+
+
+button:active{
+    border-color: #ffffff;
+}
+
+.material-symbols-rounded {
+    font-size: 20px;
+}
+
+#content {
+    margin-left: auto;
+    margin-right: auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 95vh;
+}
+
+#cover {
+    aspect-ratio: 1/1;
+    flex-grow: 1;
+    border-radius: 5%;
+    background-size: contain;
+    margin-top: 20px;
+    box-shadow: black 6px 6px 20px 0px;
+}
+
+#shuffle {
+    position: relative;
+}
+
+#dot {
+    position: absolute;
+    left: 6px;
+    top: 11px;
+}

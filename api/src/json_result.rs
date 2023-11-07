@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use serde::Serialize;
 use serde_json;
+use serde_repr::Serialize_repr;
 use thiserror::Error;
 
 pub type JsonResult = Result<JsonResponse, JsonError>;
@@ -23,7 +24,8 @@ pub struct JsonError {
     data: Option<String>,
 }
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize_repr, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i16)]
 pub enum JsonErrCode {
     Parse = -32700,
     InvalidReq = -32600,

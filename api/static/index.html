@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>API</title>
+    <script src="./script.js"></script>
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,400,0,0" />
+    <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+    <div id="content">
+        <div id="cover"></div>
+        <div id="info">
+            <span id="title">Title</span>
+            <span id="artist">Artists</span>
+        </div>
+        <div id="controls">
+            <button id="shuffle" onclick="toggleShuffle()">
+                <span class="material-symbols-rounded">shuffle</span>
+                <span id="dot" class="material-symbols-rounded">wifi_1_bar</span>
+            </button>
+            <button id="playPause" onclick="togglePlay()"><span class="material-symbols-rounded">play_arrow</span></button>
+            <button id="next" onclick="nextTrack()"><span class="material-symbols-rounded">skip_next</span></button>
+        </div>
+        <div>
+            <button id="mute" onclick="toggleMute()"><span class="material-symbols-rounded">volume_up</span></button>
+            <input type="range" min=0 max=100 id="volumeSlider" onchange="setVolume()"></slider>
+        </div>
+    </div>
+
+    <script>
+        spot = new LibrespotApi();
+
+        const symbol = {
+            play: '<span class="material-symbols-rounded">play_arrow</span>',
+            pause: '<span class="material-symbols-rounded">pause</span>',
+            stopped: '<span class="material-symbols-rounded">play_disabled</span>',
+            shuffle: '<span class="material-symbols-rounded">shuffle</span>',
+            shuffleOn: '<span class="material-symbols-rounded">shuffle</span> <span id="dot" class= "material-symbols-rounded" > wifi_1_bar</span>',
+            mute: '<span class="material-symbols-rounded">volume_up</span>',
+            muteOn: '<span class="material-symbols-rounded">volume_off</span>'
+        }
+
+        function togglePlay() {
+            if (spot.PlayerState.playing == "Playing"){
+                spot.sendSetPause();
+            } else {
+                spot.sendSetPlay();
+            }
+        }
+
+        function setVolume() {
+            var vol = 655.35 * document.getElementById("volumeSlider").value;
+            spot.sendSetVolume( Math.round(vol) );
+        }
+
+        function toggleShuffle() {
+            if (spot.PlayerState.shuffle) {
+                spot.sendSetShuffleOff();
+            } else {
+                spot.sendSetShuffleOn();
+            }
+        }
+
+        function nextTrack() {
+            spot.sendSetNext();
+        }
+
+ 
+        spot.onupdate = function(data) {
+            if (data.playing == "Stopped") {
+                document.getElementById("title").innerHTML = "Nothing playing";
+                document.getElementById("artist").innerHTML = "";
+                document.getElementById("playPause").innerHTML = symbol.stopped;
+                document.getElementById("shuffle").innerHTML = symbol.shuffle;
+                document.getElementById("mute").innerHTML = symbol.mute;
+                document.getElementById("volumeSlider").value = 0;
+                document.getElementById("cover").style.backgroundColor = "black";
+            } else {
+                document.getElementById("title").innerHTML = data.track.name;
+                document.getElementById("artist").innerHTML =  data.track.artists.join(", ");
+                document.getElementById("playPause").innerHTML = data.playing == "Playing" ? symbol.pause : symbol.play;
+                document.getElementById("shuffle").innerHTML = data.shuffle ? symbol.shuffleOn : symbol.shuffle;
+                document.getElementById("mute").innerHTML = data.mute ? symbol.muteOn : symbol.mute;
+                document.getElementById("volumeSlider").value = data.volume/655.35;
+                document.getElementById("cover").style.backgroundImage = "url(" + data.track.covers[0].url + ")";
+            }
+        };
+
+    </script>
+</body>
+</html>

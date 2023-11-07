@@ -2,6 +2,7 @@ use bytes::Bytes;
 use log::{debug, error, info};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     collections::HashMap,
     str,
@@ -40,12 +41,14 @@ enum Notification {
     Stop,
     NewTrack(Track),
     VolumeChange(u16),
+    Shuffle(bool),
 }
 
 #[derive(Debug, Serialize)]
 struct JsonNotification {
     jsonrpc: f32,
     method: String,
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
     params: serde_json::Value,
 }
 
@@ -77,6 +80,7 @@ struct PlayerState {
     track: Option<Track>,
     playing: PlayingState,
     volume: u16,
+    shuffle: bool,
 }
 
 type UserTaskVec = Arc<RwLock<HashMap<usize, tokio::task::JoinHandle<()>>>>;
@@ -107,6 +111,7 @@ impl Server {
                 track: None,
                 playing: PlayingState::Stopped,
                 volume: 0,
+                shuffle: false,
             })),
             user_tasks: Arc::new(RwLock::new(HashMap::new())),
             user_message_tx: pub_tx,
@@ -234,6 +239,10 @@ impl ServerInternal {
                     state.volume = volume;
                     notif = Some(Notification::VolumeChange(volume));
                 }
+                PlayerEvent::ShuffleChanged { shuffle } => {
+                    state.shuffle = shuffle;
+                    notif = Some(Notification::Shuffle(shuffle));
+                }
                 _ => {}
             }
         }
@@ -252,7 +261,7 @@ impl ServerInternal {
                 Notification::NewTrack(track) => JsonNotification {
                     jsonrpc: 2.0,
                     method: "OnNewTrack".to_string(),
-                    params: serde_json::to_value(track)?,
+                    params: json!({"track": track}),
                 },
                 Notification::Pause => JsonNotification {
                     jsonrpc: 2.0,
@@ -266,14 +275,19 @@ impl ServerInternal {
                 },
                 Notification::Stop => JsonNotification {
                     jsonrpc: 2.0,
-                    method: "OnPause".to_string(),
+                    method: "OnStop".to_string(),
                     params: serde_json::Value::Null,
                 },
                 Notification::VolumeChange(vol) => JsonNotification {
                     jsonrpc: 2.0,
                     method: "OnVolumeChange".to_string(),
-                    params: serde_json::to_value(vol)?,
+                    params: json!({"volume": vol}),
                 },
+                Notification::Shuffle(shuffle) => JsonNotification { 
+                    jsonrpc: 2.0,
+                    method: "OnShuffleChange".to_string(),
+                    params: json!({"shuffle": shuffle}), 
+                }
             };
 
             self.user_message_tx.send(serde_json::to_string(&m)?)?;
@@ -385,18 +399,22 @@ impl ServerInternal {
     fn do_request(&self, req: serde_json::Value) -> JsonResult {
         let req: JsonRequest = serde_json::from_value(req)?;
 
-        let result = match req.method.as_str() {
-            "getStatus" => serde_json::to_value(self.player_state.as_ref())?,
-            "getVolume" => serde_json::to_value(self.player_state.read().volume)?,
-            "getPlayState" => serde_json::to_value(&self.player_state.read().playing)?,
-            "setPlay" => serde_json::to_value(self.send_command(SpircCommand::Play)?)?,
-            "setPause" => serde_json::to_value(self.send_command(SpircCommand::Pause)?)?,
+        let result: serde_json::Value = match req.method.as_str() {
+            "getStatus" => json!(self.player_state.as_ref()),
+            "getVolume" => json!({"volume": self.player_state.read().volume}),
+            "getPlayState" => json!({"playing": &self.player_state.read().playing}),
+            "setPlay" => json!(self.send_command(SpircCommand::Play)?),
+            "setPause" => json!(self.send_command(SpircCommand::Pause)?),
+            "setNext" => json!(self.send_command(SpircCommand::Next)?),
+            "setShuffleOn" => json!(self.send_command(SpircCommand::Shuffle(true))?),
+            "setShuffleOff" => json!(self.send_command(SpircCommand::Shuffle(false))?),
             "setVolume" => {
                 let vol = req.params;
                 let vol = match vol {
-                    Some(serde_json::Value::Number(v)) => v.as_u64().ok_or_else(|| {
-                        JsonError::invalid_param(Some("Volume not a number".to_string()))
-                    })? as u16,
+                    Some(serde_json::Value::Number(v)) => {
+                        v.as_u64().ok_or_else(|| {
+                            JsonError::invalid_param(Some("Volume not a number".to_string()))
+                        })? as u16},
                     _ => {
                         return Err(JsonError::invalid_param(Some(
                             "Volume not a number".to_string(),
@@ -404,7 +422,7 @@ impl ServerInternal {
                     }
                 };
 
-                serde_json::to_value(self.send_command(SpircCommand::SetVolume(vol))?)?
+                json!(self.send_command(SpircCommand::SetVolume(vol))?)
             }
             _ => return Err(JsonError::method_not_found(None)),
         };
@@ -412,7 +430,7 @@ impl ServerInternal {
         Ok(JsonResponse::new(req.id, result))
     }
 
-    fn send_command(&self, command: SpircCommand) -> Result<(), JsonError> {
+    fn send_command(&self, command: SpircCommand) -> Result<String, JsonError> {
         let sp = self.spirc.read();
         debug!("Sending spirc command: {command:?}");
 
@@ -420,7 +438,7 @@ impl ServerInternal {
             Some(ref sp) => {
                 sp.send(command)
                     .map_err(|e| JsonError::internal(Some(e.to_string())))?;
-                Ok(())
+                Ok("Ok".to_string())
             }
             None => Err(JsonError::no_control(None)),
         }

@@ -1578,6 +1578,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "serde_repr",
  "static_dir",
  "thiserror",
  "tokio",
@@ -2903,6 +2904,17 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f0a21fba416426ac927b1691996e82079f8b6156e920c85345f135b2e9ba2de"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.32",
 ]
 
 [[package]]

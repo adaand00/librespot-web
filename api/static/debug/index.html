@@ -14,5 +14,37 @@
     }</textarea>
     <button id="btn" onclick="sendText()">Send</button>
     <div id="response"></div>
+
+    <h3>Websocket state</h3>
+    <div id="wsState"></div>
+
+    <!-- Send text field as json POST to server
+         Receive json response from server
+         using fetch API -->
+         
+    <script>
+        var spot = new LibrespotApi();
+        spot.onupdate = function (data) {
+            document.getElementById("wsState").innerHTML = JSON.stringify(data);
+        };
+
+        function sendText() {
+            var text = document.getElementById("text").value;
+
+            fetch('/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: text
+            })
+                .then(res => res.text())
+                .then(data => {
+                    console.log(data);
+                    document.getElementById("response").innerHTML = data;
+                })
+                .catch(err => console.log(err));
+        }
+    </script>
 </body>
 </html>
