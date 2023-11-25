@@ -44,7 +44,6 @@ enum Notification {
     NewTrack(Track),
     VolumeChange(u16),
     Shuffle(bool),
-    Shutdown,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -230,7 +229,6 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        self.internal.forward_event(Notification::Shutdown);
         self.internal.cancel.cancel();
     }
 }
@@ -316,11 +314,6 @@ impl ServerInternal {
                     method: "OnShuffleChange".to_string(),
                     params: json!({"shuffle": shuffle}),
                 },
-                Notification::Shutdown => JsonNotification {
-                    jsonrpc: 2.0,
-                    method: "OnShutdown".to_string(),
-                    params: serde_json::Value::Null,
-                },
             };
 
             // Errors if last reciever dropped since check,
@@ -338,6 +331,7 @@ impl ServerInternal {
 
         let users = self.user_tasks.clone();
         let state = self.clone();
+        let cancel = self.cancel.clone();
 
         let thr = self.rt.spawn(async move {
             let (mut tx, mut ws_rx) = sock.split();
@@ -371,13 +365,15 @@ impl ServerInternal {
                         debug!("New event to WS ID: {uid}");
                         match event {
                             Ok(m) => {
-                                if m.method == "OnShutdown" {
-                                    break
-                                };
                                 serde_json::to_string(&m).expect("Should be able to parse notification")
                             },
                             Err(e) => format!("Internal server error: {e}").to_string(),
                         }
+                    }
+                    _ = cancel.cancelled() => {
+                        // We don't care about result since we are shutting down
+                        let _ = tx.send(ws::Message::close()).await;
+                        break;
                     }
                 };
 
