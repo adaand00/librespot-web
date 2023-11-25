@@ -27,6 +27,7 @@ use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
 
 static UID_NEXT: AtomicUsize = AtomicUsize::new(1);
 
+// Expected request message
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct JsonRequest {
@@ -36,6 +37,7 @@ struct JsonRequest {
     params: Option<serde_json::Value>,
 }
 
+// Internal notification types
 #[derive(Debug, Serialize)]
 enum Notification {
     Play,
@@ -46,6 +48,7 @@ enum Notification {
     Shuffle(bool),
 }
 
+// Websocket notification message
 #[derive(Debug, Serialize, Clone)]
 struct JsonNotification {
     jsonrpc: f32,
@@ -54,6 +57,7 @@ struct JsonNotification {
     params: serde_json::Value,
 }
 
+// State of player
 #[derive(Debug, Serialize)]
 enum PlayingState {
     Playing,
@@ -61,12 +65,14 @@ enum PlayingState {
     Stopped,
 }
 
+// Album art
 #[derive(Debug, Serialize, Clone)]
 struct Cover {
     url: String,
     size: (i32, i32),
 }
 
+// Relevant track information
 #[derive(Debug, Serialize, Clone)]
 struct Track {
     track_id: String,
@@ -77,6 +83,7 @@ struct Track {
     show_name: Option<String>,
 }
 
+// Player state
 #[derive(Debug, Serialize)]
 struct PlayerState {
     track: Option<Track>,
@@ -85,6 +92,7 @@ struct PlayerState {
     shuffle: bool,
 }
 
+// map for websocket ID -> task handle 
 type UserTaskVec = Arc<RwLock<HashMap<usize, tokio::task::JoinHandle<()>>>>;
 
 struct ServerInternal {
@@ -109,10 +117,12 @@ impl Server {
     ) -> Self {
         info!("Starting api server thread");
 
+        // New runtime for all web-API related stuff
         let rt = tokio::runtime::Runtime::new().expect("Unable to start server runtime");
 
         let cancel = CancellationToken::new();
 
+        // websocket notification channel
         let (pub_tx, _) = broadcast::channel::<JsonNotification>(16);
 
         let state = Arc::new(ServerInternal {
@@ -131,8 +141,11 @@ impl Server {
 
         let state1 = state.clone();
 
+        // New thread for web-API runtime
         let handle = thread::spawn(move || {
+
             let state2 = state1.clone();
+            // Listen for librespot events 
             let _event_task = rt.spawn(async move {
                 loop {
                     if let Some(e) = player_events.recv().await {
@@ -144,6 +157,7 @@ impl Server {
             let state2 = state1.clone();
             let with_state = warp::any().map(move || state2.clone().to_owned());
 
+            // Websocket connection path
             let ws_path = warp::path::end().and(ws()).and(with_state.clone()).map(
                 |ws: ws::Ws, state2: Arc<ServerInternal>| {
                     debug!("New websocket connection");
@@ -151,6 +165,7 @@ impl Server {
                 },
             );
 
+            // Http post path
             let post_path = warp::path::end()
                 .and(warp::post())
                 .and(warp::body::bytes())
@@ -168,6 +183,7 @@ impl Server {
                     }
                 });
 
+            // Use custom dir if it is specified
             let custom_dir = custom_path.is_some();
 
             let dir = match custom_path {
@@ -175,6 +191,7 @@ impl Server {
                 None => "".to_string(),
             };
 
+            // Custom dir path, rejects if there is no custom path specified
             let get_path_custom = warp::any()
                 .and_then(move || async move {
                     if enable_web & custom_dir {
@@ -186,6 +203,7 @@ impl Server {
                 .and(warp::fs::dir(dir))
                 .map(|_, d| d);
 
+            // Default web, only if no custom is specified
             let get_path_static = warp::any()
                 .and_then(move || async move {
                     if enable_web & !custom_dir {
@@ -204,6 +222,7 @@ impl Server {
 
             let http_server = Box::pin(warp::serve(path).run(([0, 0, 0, 0], 3030)));
 
+            // Wait for server to fail, or internal cancellation
             rt.block_on(async {
                     tokio::select! {
                     _ = http_server => {},
@@ -211,6 +230,7 @@ impl Server {
                 }
             });
 
+            // TODO: wait for all websocket tasks to finish
             info!("Shutting down API server")
         });
 
@@ -220,6 +240,7 @@ impl Server {
         }
     }
 
+    // set the current spirc channel
     pub fn set_spirc_channel(&self, spirc: mpsc::UnboundedSender<SpircCommand>) {
         debug!("Spirc command channel set");
         let mut channel = self.internal.spirc.write();
@@ -234,6 +255,7 @@ impl Drop for Server {
 }
 
 impl ServerInternal {
+    // Recieves internal event, updates state, sends notifications
     fn handle_internal_event(&self, player_event: PlayerEvent) {
         let mut notif: Option<Notification> = None;
         debug!("Recieved PlayerEvent: {player_event:?}");
@@ -280,6 +302,7 @@ impl ServerInternal {
         }
     }
 
+    // Forward notifications as JsonNotifications to connected websockets
     fn forward_event(&self, event: Notification) {
         if self.user_message_tx.receiver_count() != 0 {
             debug!("Sending notification to connected websockets");
@@ -316,15 +339,17 @@ impl ServerInternal {
                 },
             };
 
-            // Errors if last reciever dropped since check,
+            // Errors if last receiver dropped since check,
             // unlikely and can be ignored.
             let _ = self.user_message_tx.send(m);
         }
     }
 
+    // Add new websocket
     fn add_user(self: Arc<Self>, sock: warp::ws::WebSocket) {
         let mut event_channel = self.user_message_tx.subscribe();
 
+        // Atomic ID
         let uid = UID_NEXT.fetch_add(1, Ordering::Relaxed);
         let num_open = self.user_message_tx.receiver_count();
         debug!("Adding new websocket connection, ID: {uid}, currently open: {num_open}");
@@ -333,6 +358,7 @@ impl ServerInternal {
         let state = self.clone();
         let cancel = self.cancel.clone();
 
+        // New thread for websocket connection
         let thr = self.rt.spawn(async move {
             let (mut tx, mut ws_rx) = sock.split();
 
@@ -342,6 +368,7 @@ impl ServerInternal {
             loop {
 
                 let data: String = tokio::select! {
+                    // Receive messages from websocket
                     message = ws_rx.next() => {
                         debug!("New request from WS ID: {uid}");
                         match message {
@@ -361,6 +388,7 @@ impl ServerInternal {
                             },
                         }
                     },
+                    // Receive internal notifications
                     event = event_channel.recv() => {
                         debug!("New event to WS ID: {uid}");
                         match event {
@@ -390,6 +418,7 @@ impl ServerInternal {
         self.user_tasks.write().insert(uid, thr);
     }
 
+    // handle raw websocket message
     fn handle_socket_message(&self, message: Result<ws::Message, warp::Error>) -> JsonResult {
         let m = message.map_err(|e| JsonError::internal(Some(e.to_string())))?;
 
@@ -400,6 +429,7 @@ impl ServerInternal {
         self.handle_request(m)
     }
 
+    // handle json request
     fn handle_request(&self, request: &str) -> JsonResult {
         let val: serde_json::Value = serde_json::from_str(request)?;
         let id = match &val["id"] {
@@ -431,6 +461,7 @@ impl ServerInternal {
         res
     }
 
+    // execute request
     fn do_request(&self, req: serde_json::Value) -> JsonResult {
         let req: JsonRequest = serde_json::from_value(req)?;
 
@@ -464,6 +495,7 @@ impl ServerInternal {
         Ok(JsonResponse::new(req.id, result))
     }
 
+    // send command to internal player
     fn send_command(&self, command: SpircCommand) -> Result<String, JsonError> {
         let sp = self.spirc.read();
         debug!("Sending spirc command: {command:?}");
@@ -480,6 +512,7 @@ impl ServerInternal {
 }
 
 impl Track {
+    // Extract relevant information from internal representation
     fn from_audio_item(item: AudioItem) -> Self {
         let covers = item
             .covers
