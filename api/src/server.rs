@@ -128,7 +128,7 @@ impl Server {
             let _event_task = rt.spawn(async move {
                 loop {
                     if let Some(e) = player_events.recv().await {
-                        state2.handle_internal_event(e).unwrap();
+                        state2.handle_internal_event(e);
                     };
                 }
             });
@@ -191,7 +191,7 @@ impl Server {
             let http_server = Box::pin(warp::serve(path).run(([0, 0, 0, 0], 3030)));
 
             rt.block_on(http_server);
-            error!("Http server closed, shutting down API server")
+            info!("Http server closed, shutting down API server")
         });
 
         Self {
@@ -214,7 +214,7 @@ impl Drop for Server {
 }
 
 impl ServerInternal {
-    fn handle_internal_event(&self, player_event: PlayerEvent) -> Result<(), JsonError> {
+    fn handle_internal_event(&self, player_event: PlayerEvent){
         let mut notif: Option<Notification> = None;
         debug!("Recieved PlayerEvent: {player_event:?}");
 
@@ -256,13 +256,11 @@ impl ServerInternal {
         }
 
         if let Some(n) = notif {
-            self.forward_event(n)?;
+            self.forward_event(n);
         }
-
-        Ok(())
     }
 
-    fn forward_event(&self, event: Notification) -> Result<(), JsonError> {
+    fn forward_event(&self, event: Notification) {
         if self.user_message_tx.receiver_count() != 0 {
             debug!("Sending notification to connected websockets");
             let m = match event {
@@ -303,9 +301,10 @@ impl ServerInternal {
                 },
             };
 
-            self.user_message_tx.send(m)?;
+            // Errors if last reciever dropped since check, 
+            // unlikely and can be ignored.
+            let _ = self.user_message_tx.send(m);
         }
-        Ok(())
     }
 
     fn add_user(self: Arc<Self>, sock: warp::ws::WebSocket) {
