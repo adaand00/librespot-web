@@ -26,6 +26,7 @@ use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
 
 static UID_NEXT: AtomicUsize = AtomicUsize::new(1);
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct JsonRequest {
     id: i64,
@@ -42,9 +43,10 @@ enum Notification {
     NewTrack(Track),
     VolumeChange(u16),
     Shuffle(bool),
+    Shutdown,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct JsonNotification {
     jsonrpc: f32,
     method: String,
@@ -88,7 +90,7 @@ type UserTaskVec = Arc<RwLock<HashMap<usize, tokio::task::JoinHandle<()>>>>;
 struct ServerInternal {
     player_state: Arc<RwLock<PlayerState>>,
     user_tasks: UserTaskVec,
-    user_message_tx: broadcast::Sender<String>,
+    user_message_tx: broadcast::Sender<JsonNotification>,
     rt: tokio::runtime::Handle,
     spirc: Arc<RwLock<Option<mpsc::UnboundedSender<SpircCommand>>>>,
 }
@@ -104,7 +106,7 @@ impl Server {
 
         let rt = tokio::runtime::Runtime::new().expect("Unable to start server runtime");
 
-        let (pub_tx, _) = broadcast::channel::<String>(16);
+        let (pub_tx, _) = broadcast::channel::<JsonNotification>(16);
 
         let state = Arc::new(ServerInternal {
             player_state: Arc::new(RwLock::new(PlayerState {
@@ -205,6 +207,12 @@ impl Server {
     }
 }
 
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.internal.forward_event(Notification::Shutdown);
+    }
+}
+
 impl ServerInternal {
     fn handle_internal_event(&self, player_event: PlayerEvent) -> Result<(), JsonError> {
         let mut notif: Option<Notification> = None;
@@ -287,10 +295,15 @@ impl ServerInternal {
                     jsonrpc: 2.0,
                     method: "OnShuffleChange".to_string(),
                     params: json!({"shuffle": shuffle}), 
-                }
+                },
+                Notification::Shutdown => JsonNotification { 
+                    jsonrpc: 2.0,
+                    method: "OnShutdown".to_string(),
+                    params: serde_json::Value::Null, 
+                },
             };
 
-            self.user_message_tx.send(serde_json::to_string(&m)?)?;
+            self.user_message_tx.send(m)?;
         }
         Ok(())
     }
@@ -306,15 +319,15 @@ impl ServerInternal {
         let state = self.clone();
 
         let thr = self.rt.spawn(async move {
-            let (mut tx, mut rx) = sock.split();
+            let (mut tx, mut ws_rx) = sock.split();
 
             // socket JSONs command -> player command -> socket response
             // internal event JSONs -> socket notification
 
             loop {
 
-                let response: String = tokio::select! {
-                    message = rx.next() => {
+                let data: String = tokio::select! {
+                    message = ws_rx.next() => {
                         debug!("New request from WS ID: {uid}");
                         match message {
                             None => break,
@@ -336,13 +349,18 @@ impl ServerInternal {
                     event = event_channel.recv() => {
                         debug!("New event to WS ID: {uid}");
                         match event {
-                            Ok(m) => m,
+                            Ok(m) => {
+                                if m.method == "OnShutdown" {
+                                    break 
+                                };
+                                serde_json::to_string(&m).expect("Should be able to parse notification")
+                            },
                             Err(e) => format!("Internal server error: {e}").to_string(),
                         }
                     }
                 };
 
-                match tx.send(ws::Message::text(response)).await {
+                match tx.send(ws::Message::text(data)).await {
                     Ok(_) => (),
                     Err(e) => {debug!("{e}"); break;}
                 };
