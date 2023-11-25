@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use log::{debug, error, info};
+use log::{debug, info};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -16,6 +16,7 @@ use std::{
 use futures_util::{SinkExt, StreamExt};
 use static_dir::static_dir;
 use tokio::sync::{broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
 use warp::{ws, Filter};
 
 use crate::json_result::{JsonError, JsonResponse, JsonResult};
@@ -92,6 +93,7 @@ struct ServerInternal {
     user_tasks: UserTaskVec,
     user_message_tx: broadcast::Sender<JsonNotification>,
     rt: tokio::runtime::Handle,
+    cancel: CancellationToken,
     spirc: Arc<RwLock<Option<mpsc::UnboundedSender<SpircCommand>>>>,
 }
 
@@ -101,10 +103,16 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(mut player_events: PlayerEventChannel, enable_web: bool, custom_path: Option<String>) -> Self {
+    pub fn new(
+        mut player_events: PlayerEventChannel,
+        enable_web: bool,
+        custom_path: Option<String>,
+    ) -> Self {
         info!("Starting api server thread");
 
         let rt = tokio::runtime::Runtime::new().expect("Unable to start server runtime");
+
+        let cancel = CancellationToken::new();
 
         let (pub_tx, _) = broadcast::channel::<JsonNotification>(16);
 
@@ -118,6 +126,7 @@ impl Server {
             user_tasks: Arc::new(RwLock::new(HashMap::new())),
             user_message_tx: pub_tx,
             rt: rt.handle().clone(),
+            cancel,
             spirc: Arc::new(RwLock::new(None)),
         });
 
@@ -162,36 +171,48 @@ impl Server {
 
             let custom_dir = custom_path.is_some();
 
-            let dir = match custom_path{
+            let dir = match custom_path {
                 Some(s) => s,
-                None => "".to_string()
+                None => "".to_string(),
             };
 
             let get_path_custom = warp::any()
                 .and_then(move || async move {
-                    if enable_web & custom_dir{
+                    if enable_web & custom_dir {
                         Ok(())
-                    }else{
+                    } else {
                         Err(warp::reject::not_found())
                     }
-                }).and(warp::fs::dir(dir))
+                })
+                .and(warp::fs::dir(dir))
                 .map(|_, d| d);
 
-            let get_path_static = warp::any().and_then(move || async move {
-                    if enable_web & !custom_dir{
+            let get_path_static = warp::any()
+                .and_then(move || async move {
+                    if enable_web & !custom_dir {
                         Ok(())
-                    }else{
+                    } else {
                         Err(warp::reject::not_found())
                     }
-                }).and(static_dir!("./static"))
+                })
+                .and(static_dir!("./static"))
                 .map(|_, d| d);
 
-            let path = post_path.or(ws_path).or(get_path_custom).or(get_path_static);
+            let path = post_path
+                .or(ws_path)
+                .or(get_path_custom)
+                .or(get_path_static);
 
             let http_server = Box::pin(warp::serve(path).run(([0, 0, 0, 0], 3030)));
 
-            rt.block_on(http_server);
-            info!("Http server closed, shutting down API server")
+            rt.block_on(async {
+                    tokio::select! {
+                    _ = http_server => {},
+                    _ = state1.cancel.cancelled() => {},
+                }
+            });
+
+            info!("Shutting down API server")
         });
 
         Self {
@@ -210,11 +231,12 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.internal.forward_event(Notification::Shutdown);
+        self.internal.cancel.cancel();
     }
 }
 
 impl ServerInternal {
-    fn handle_internal_event(&self, player_event: PlayerEvent){
+    fn handle_internal_event(&self, player_event: PlayerEvent) {
         let mut notif: Option<Notification> = None;
         debug!("Recieved PlayerEvent: {player_event:?}");
 
@@ -289,19 +311,19 @@ impl ServerInternal {
                     method: "OnVolumeChange".to_string(),
                     params: json!({"volume": vol}),
                 },
-                Notification::Shuffle(shuffle) => JsonNotification { 
+                Notification::Shuffle(shuffle) => JsonNotification {
                     jsonrpc: 2.0,
                     method: "OnShuffleChange".to_string(),
-                    params: json!({"shuffle": shuffle}), 
+                    params: json!({"shuffle": shuffle}),
                 },
-                Notification::Shutdown => JsonNotification { 
+                Notification::Shutdown => JsonNotification {
                     jsonrpc: 2.0,
                     method: "OnShutdown".to_string(),
-                    params: serde_json::Value::Null, 
+                    params: serde_json::Value::Null,
                 },
             };
 
-            // Errors if last reciever dropped since check, 
+            // Errors if last reciever dropped since check,
             // unlikely and can be ignored.
             let _ = self.user_message_tx.send(m);
         }
@@ -330,11 +352,11 @@ impl ServerInternal {
                         debug!("New request from WS ID: {uid}");
                         match message {
                             None => break,
-                            Some(m) => { 
+                            Some(m) => {
 
                                 match &m {
                                     Ok(ms) => if ms.is_close() {debug!("Got close from WS ID: {uid}"); break;},
-                                    Err(_) => () 
+                                    Err(_) => ()
                                 }
 
                                 let res = state.handle_socket_message(m);
@@ -350,7 +372,7 @@ impl ServerInternal {
                         match event {
                             Ok(m) => {
                                 if m.method == "OnShutdown" {
-                                    break 
+                                    break
                                 };
                                 serde_json::to_string(&m).expect("Should be able to parse notification")
                             },
@@ -428,10 +450,9 @@ impl ServerInternal {
             "setVolume" => {
                 let vol = req.params;
                 let vol = match vol {
-                    Some(serde_json::Value::Number(v)) => {
-                        v.as_u64().ok_or_else(|| {
-                            JsonError::invalid_param(Some("Volume not a number".to_string()))
-                        })? as u16},
+                    Some(serde_json::Value::Number(v)) => v.as_u64().ok_or_else(|| {
+                        JsonError::invalid_param(Some("Volume not a number".to_string()))
+                    })? as u16,
                     _ => {
                         return Err(JsonError::invalid_param(Some(
                             "Volume not a number".to_string(),

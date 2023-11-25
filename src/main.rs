@@ -1649,7 +1649,7 @@ fn get_setup() -> Setup {
     let use_api = opt_present(ENABLE_API);
     let use_web = opt_present(ENABLE_WEB);
 
-    let custom_web_path = opt_str(WEB_DIR); 
+    let custom_web_path = opt_str(WEB_DIR);
 
     Setup {
         format,
@@ -1775,7 +1775,11 @@ async fn main() {
     }
 
     if setup.use_api {
-        api_server = Some(Server::new(player.get_player_event_channel(), setup.use_web, setup.custom_web_path));
+        api_server = Some(Server::new(
+            player.get_player_event_channel(),
+            setup.use_web,
+            setup.custom_web_path,
+        ));
     }
 
     loop {
